@@ -1,18 +1,17 @@
 package plugin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
-	"github.com/grafana/grafana-plugin-sdk-go/backend/httpclient"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // Make sure Datasource implements required interfaces. This is important to do
@@ -27,6 +26,8 @@ var (
 )
 
 // NewDatasource creates a new datasource instance.
+// TODO: Implement MongoDB authentication by leveraging the HTTP-specific options maybe?
+// TODO: We can also leverage settings.JSONData as hinted by the doc...
 func NewDatasource(ctx context.Context, settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 	backend.Logger.Debug("creating a new datasource", "settings", settings)
 
@@ -35,72 +36,42 @@ func NewDatasource(ctx context.Context, settings backend.DataSourceInstanceSetti
 		return nil, fmt.Errorf("http client options: %w", err)
 	}
 
+	cli, err := NewDBClient(settings.URL)
+	if err != nil {
+		return nil, fmt.Errorf("mongoclient new: %w", err)
+	}
+
 	if settings.BasicAuthEnabled {
 		opts.BasicAuth.User = settings.BasicAuthUser
 		opts.BasicAuth.Password = settings.DecryptedSecureJSONData["basicAuthPassword"]
 	}
 
-	opts.Header.Add("Content-Type", "application/json")
-	opts.Header.Add("User-Agent", "gtom/1.0")
-
-	cli, err := httpclient.New(opts)
-	if err != nil {
-		return nil, fmt.Errorf("httpclient new: %w", err)
-	}
-
 	return &Datasource{
 		settings.URL,
 		cli,
+		cli.Database("telegrafData"),
 	}, nil
 }
 
 // Datasource is an example datasource which can respond to data queries, reports
 // its health and has streaming skills.
 type Datasource struct {
-	url        string
-	httpClient *http.Client
+	uri string
+	cli *mongo.Client
+	db  *mongo.Database
 }
 
 // Check https://grafana.com/developers/plugin-tools/create-a-plugin/extend-a-plugin/add-resource-handler
 func (d *Datasource) CallResource(ctx context.Context, req *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
-	backend.Logger.Debug("handling a resource query", "path", req.Path)
 	switch req.Path {
-	case "metrics", "metric-payload-options", "variable", "tag-keys", "tag-values":
-		backend.Logger.Debug("handling metrics query", "body", req.Body)
-
-		resp, err := d.httpClient.Post(d.url+"/"+req.Path, "application/json", bytes.NewReader(req.Body))
-		if err != nil {
-			backend.Logger.Error("couldn't get metrics", "err", err)
-			return sender.Send(&backend.CallResourceResponse{
-				Status: http.StatusNotFound,
-			})
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			backend.Logger.Error("couldn't get metrics", "rc", resp.StatusCode)
-			return sender.Send(&backend.CallResourceResponse{
-				Status: http.StatusNotFound,
-				Body:   []byte(`{"err": "couldn't get the metrics"}`),
-			})
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			backend.Logger.Error("couldn't read the returned metrics", "err", err)
-			return sender.Send(&backend.CallResourceResponse{
-				Status: http.StatusNotFound,
-				Body:   []byte(`{"err": "couldn't read the returned metrics"}`),
-			})
-		}
-
-		return sender.Send(&backend.CallResourceResponse{
-			Status: http.StatusOK,
-			Body:   body,
-		})
+	// case "metrics", "metric-payload-options", "variable", "tag-keys", "tag-values":
+	case "metrics":
+		backend.Logger.Debug("handling metrics request query", "body", req.Body)
+		return handleMetrics(d.db, sender, req.Body)
 	default:
 		return sender.Send(&backend.CallResourceResponse{
 			Status: http.StatusNotFound,
-			Body:   []byte(`{"err": "requested non-existent path"}`),
+			Body:   []byte(fmt.Sprintf(`{"err": "requested non-existent resource %s"}`, req.Path)),
 		})
 	}
 }
@@ -110,6 +81,7 @@ func (d *Datasource) CallResource(ctx context.Context, req *backend.CallResource
 // be disposed and a new one will be created using NewSampleDatasource factory function.
 func (d *Datasource) Dispose() {
 	// Clean up datasource instance resources.
+	d.cli.Disconnect(context.TODO())
 }
 
 // QueryData handles multiple queries and returns multiple responses.
@@ -169,19 +141,12 @@ func (d *Datasource) query(_ context.Context, pCtx backend.PluginContext, query 
 // datasource configuration page which allows users to verify that
 // a datasource is working as expected.
 func (d *Datasource) CheckHealth(_ context.Context, req *backend.CheckHealthRequest) (*backend.CheckHealthResult, error) {
-	resp, err := d.httpClient.Get(d.url)
-	if err != nil {
-		backend.Logger.Error("couldn't reach the datasource", "err", err)
+	backend.Logger.Debug("cheking the health of the backing mongo instance", "uri", d.uri)
+	if err := d.cli.Ping(context.TODO(), nil); err != nil {
+		backend.Logger.Error("error trying to ping the database", "err", err)
 		return &backend.CheckHealthResult{
 			Status:  backend.HealthStatusError,
-			Message: fmt.Sprintf("Error making the request: %v", err),
-		}, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return &backend.CheckHealthResult{
-			Status:  backend.HealthStatusError,
-			Message: fmt.Sprintf("The backend doesn't look too good, got response code %d", resp.StatusCode),
+			Message: fmt.Sprintf("Error when pinging the database: %v", err),
 		}, nil
 	}
 
