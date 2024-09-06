@@ -47,3 +47,7 @@ export interface MetricConfig {
 }
 
 export type QueryEditorMode = 'code' | 'builder';
+
+export interface MySecureJsonData {
+  basicAuthPassword?: string;
+}
