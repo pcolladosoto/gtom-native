@@ -1,4 +1,3 @@
-// import { css, cx } from '@emotion/css';
 import React, { ComponentType } from 'react';
 import { DataSourcePluginOptionsEditorProps } from '@grafana/data';
 import { Field, InlineField, InlineSwitch, Input, SecretInput } from '@grafana/ui';
@@ -28,10 +27,6 @@ export function ConfigEditor(props: Props) {
   const onPasswordChange = (event: ChangeEvent<HTMLInputElement>) => {
     onOptionsChange({
       ...options,
-      // secureJsonFields: {
-      //   ...options.secureJsonFields,
-      //   basicAuthPassword: true,
-      // },
       secureJsonData: {
         ...options.secureJsonData,
         basicAuthPassword: event.target.value,
@@ -42,15 +37,6 @@ export function ConfigEditor(props: Props) {
   const isValidUri = /^(mongodb|mongodb+srv):\/\/(\w+:{0,1}\w*@)?(\S+)(:[0-9]+)?(\/|\/([\w#!:.?+=&%@!\-\/]))?$/.test(
     options.url
   );
-
-  // const notValidStyle = css({
-  //   boxShadow: `inset 0 0px 5px ${theme.v1.palette.red}`,
-  // });
-  //
-  // const inputStyle = cx({ [`width-20`]: true, [notValidStyle]: !isValidUrl });
-
-  // console.log(`options before return: ${JSON.stringify(options)}`)
-  // console.log(`jsonData before return: ${JSON.stringify(jsonData)}`)
 
   return (
     <>
@@ -68,10 +54,9 @@ export function ConfigEditor(props: Props) {
                   });
                 }}
                 value={options.url}
-                placeholder="mongo://localhost:27017"
+                placeholder="mongodb://localhost:27017"
                 width={40}
                 invalid={!isValidUri}
-                // tooltip={<>Specify a complete HTTP URL (for example http://your_server:8080)</>}
               />
             </InlineField>
             <InlineField label="Database">
