@@ -23,7 +23,7 @@ type (
 	metricsReply struct {
 		Label   string           `json:"label,omitempty"`
 		Value   string           `json:"value"`
-		Payload []metricsPayload `json:"payload,omitempty"`
+		Payload []metricsPayload `json:"payloads,omitempty"`
 	}
 
 	metricsPayload struct {
@@ -33,7 +33,7 @@ type (
 		PlaceHolder  string       `json:"placeholder,omitempty"`
 		ReloadMetric bool         `json:"reloadMetric,omitempty"`
 		Width        int          `json:"width,omitempty"`
-		Options      []labelValue `json:"options"`
+		Options      []labelValue `json:"options,omitempty"`
 	}
 
 	labelValue struct {
@@ -64,6 +64,11 @@ const (
 	multiSelectPayload
 	inputPayload
 	textAreaPayload
+
+	// DISCOVER_TAGS controls whether to try to discover measure tags or not when
+	// handling requests for /metrics. It is now disabled to avoid the slowness
+	// caused by the not so good tag discovery algorithm.
+	DISCOVER_TAGS = false
 )
 
 func (p payloadType) String() string {
@@ -122,6 +127,25 @@ func handleMetrics(db *mongo.Database, sender backend.CallResourceResponseSender
 
 		cName, ok := collection["name"].(string)
 		if !ok {
+			continue
+		}
+
+		if !DISCOVER_TAGS {
+			collectionNames = append(collectionNames, metricsReply{cName, cName, []metricsPayload{
+				{
+					Label:        "Find Query",
+					Name:         "findQuery",
+					Type:         inputPayload.String(),
+					PlaceHolder:  "Your mongo find query...",
+					ReloadMetric: false,
+				},
+				{
+					Label:        "Projection",
+					Name:         "projection",
+					Type:         inputPayload.String(),
+					PlaceHolder:  "Name of the field to display",
+					ReloadMetric: false,
+				}}})
 			continue
 		}
 

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -94,6 +96,8 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 	// loop over queries and execute them individually.
 	for _, q := range req.Queries {
+		backend.Logger.Debug("answering query request", "q", q)
+
 		res := d.query(ctx, req.PluginContext, q)
 
 		// save the response in a hashmap
@@ -104,7 +108,66 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 	return response, nil
 }
 
-type queryModel struct{}
+// queryPayload defines the fields present in the payload embedded into queries.
+type queryPayload struct {
+	// FindQuery contains the find query to relay to the backing database.
+	FindQuery string `json:"findQuery"`
+
+	// Projection defines the filed to return.
+	Projection string `json:"projection"`
+}
+
+// timeRange defines the format of the embedded time range in a request.
+type timeRange struct {
+	// The RFC3339-encoded time defining the start of the metrics window.
+	From string `json:"from"`
+
+	// The RFC3339-encoded time defining the end of the metrics window.
+	To string `json:"to"`
+}
+
+type modeDiscriminator struct {
+	// Editor mode defines hwo the query was built. It can be one of code or builder.
+	// Depending on this mode, the Payload field will either be encoded as a string
+	// or as a map[string]string.
+	EditorMode string `json:"editorMode"`
+}
+
+// builderQueryModel defines the structure of the queries generated with the builder mode.
+type builderQueryModel struct {
+	// Target defines the metric (i.e. collection) being requested.
+	Target string `json:"target"`
+
+	// See the definition of the queryPayload struct
+	Payload queryPayload `json:"payload"`
+
+	// IntervalMs contains something we don't really know for now, but it sounds important!
+	IntervalMs int `json:"intervalMs"`
+
+	// MaxDataPoints defines the maximum number of points to return.
+	MaxDataPoints int64 `json:"maxDataPoints"`
+
+	// See the definition of the timeRange struct.
+	TimeRange timeRange `json:"timeRange"`
+}
+
+// codeQueryModel defines the structure of the queries generated in code mode.
+type codeQueryModel struct {
+	// Target defines the metric (i.e. collection) being requested.
+	Target string `json:"target"`
+
+	// See the definition of the queryPayload struct
+	Payload string `json:"payload"`
+
+	// IntervalMs contains something we don't really know for now, but it sounds important!
+	IntervalMs int `json:"intervalMs"`
+
+	// MaxDataPoints defines the maximum number of points to return.
+	MaxDataPoints int64 `json:"maxDataPoints"`
+
+	// See the definition of the timeRange struct.
+	TimeRange timeRange `json:"timeRange"`
+}
 
 func (d *Datasource) query(_ context.Context, pCtx backend.PluginContext, query backend.DataQuery) backend.DataResponse {
 	var response backend.DataResponse
@@ -112,12 +175,101 @@ func (d *Datasource) query(_ context.Context, pCtx backend.PluginContext, query 
 	backend.Logger.Debug("making a query", "query", query, "pluginContext", pCtx)
 
 	// Unmarshal the JSON into our queryModel.
-	var qm queryModel
-
-	err := json.Unmarshal(query.JSON, &qm)
-	if err != nil {
+	modeTeller := modeDiscriminator{}
+	if err := json.Unmarshal(query.JSON, &modeTeller); err != nil {
+		backend.Logger.Error("error unmarshalling the mode teller", "err", err)
 		return backend.ErrDataResponse(backend.StatusBadRequest, fmt.Sprintf("json unmarshal: %v", err.Error()))
 	}
+
+	backend.Logger.Debug("raw query", "query.JSON", fmt.Sprintf("%+v", string(query.JSON)))
+
+	// TODO: The correct way of handling this mess is implementing a custom JSON unmarshaller, but who's got the time!
+	qm := builderQueryModel{}
+	if modeTeller.EditorMode == "builder" {
+		if err := json.Unmarshal(query.JSON, &qm); err != nil {
+			backend.Logger.Error("error unmarshalling the builder-mode query", "err", err)
+			return backend.ErrDataResponse(backend.StatusBadRequest, fmt.Sprintf("json unmarshal: %v", err.Error()))
+		}
+	} else {
+		qCode := codeQueryModel{}
+		if err := json.Unmarshal(query.JSON, &qCode); err != nil {
+			backend.Logger.Error("error unmarshalling the code-mode query", "err", err)
+			return backend.ErrDataResponse(backend.StatusBadRequest, fmt.Sprintf("json unmarshal: %v", err.Error()))
+		}
+
+		qPayload := queryPayload{}
+		if err := json.Unmarshal([]byte(qCode.Payload), &qPayload); err != nil {
+			backend.Logger.Error("error unmarshalling the code-mode payload", "err", err)
+			return backend.ErrDataResponse(backend.StatusBadRequest, fmt.Sprintf("json unmarshal: %v", err.Error()))
+		}
+
+		qm = builderQueryModel{
+			Target:        qCode.Target,
+			Payload:       qPayload,
+			IntervalMs:    qCode.IntervalMs,
+			MaxDataPoints: qCode.MaxDataPoints,
+			TimeRange:     qCode.TimeRange,
+		}
+	}
+
+	backend.Logger.Debug("parsed query", "qm", qm)
+
+	results, err := d.find(qm.Target, query.TimeRange.From, query.TimeRange.To, qm.Payload.FindQuery, qm.Payload.Projection, query.MaxDataPoints)
+	if err != nil {
+		backend.Logger.Warn("error running the find() query", "err", err)
+	}
+
+	backend.Logger.Debug("query results", "results", fmt.Sprintf("%#v", results))
+
+	if len(results) < 1 {
+		return backend.ErrDataResponse(backend.StatusBadRequest, "got no fields back...")
+	}
+
+	timestampSlice := make([]time.Time, 0, len(results))
+	sampleVal := results[0][qm.Payload.Projection]
+	backend.Logger.Debug("sample value", "value", sampleVal)
+	valueTypeFoo := reflect.TypeOf(sampleVal)
+	valueType := reflect.TypeOf(&sampleVal)
+	backend.Logger.Debug("detected value type", "valueType", valueType.String(), "kind", valueType.Kind())
+	backend.Logger.Debug("detected value type", "valueTypeFoo", valueTypeFoo.String(), "kind", valueTypeFoo.Kind())
+
+	valueSlice := reflect.MakeSlice(reflect.SliceOf(valueTypeFoo), 0, len(results))
+	backend.Logger.Debug("value slize properties", "settable", valueSlice.CanSet(), "kind", valueSlice.Kind())
+
+	settableSlice := reflect.New(valueSlice.Type())
+	settableSlice.Elem().Set(valueSlice)
+	backend.Logger.Debug("settable slize properties", "settable", settableSlice.CanSet(), "kind", settableSlice.Kind(), "type", settableSlice.Type().String(), "foo", settableSlice.Elem().Type().String(), "faa", settableSlice.Elem().CanSet())
+
+	for i, res := range results {
+		backend.Logger.Debug("result", "i", i, "data", fmt.Sprintf("%#v", res))
+		for k, v := range res {
+			backend.Logger.Debug("members", "k", k, "v", fmt.Sprintf("%#v, type: %T", v, v))
+		}
+
+		tStamp, ok := res["timestamp"].(primitive.DateTime)
+		if !ok {
+			continue
+		}
+
+		pValue, ok := res[qm.Payload.Projection]
+		if !ok {
+			continue
+		}
+
+		backend.Logger.Debug("appending to timestampSlice")
+		timestampSlice = append(timestampSlice, tStamp.Time())
+
+		val := settableSlice.Elem()
+		// valueSlice = reflect.Append(valueSlice, reflect.ValueOf(pValue))
+		val.Set(reflect.Append(val, reflect.ValueOf(pValue)))
+		backend.Logger.Debug("appending to valueSlice", "value", pValue, "val", val.Type().String(), "len", val.Len())
+	}
+
+	backend.Logger.Debug("final timestamp slice", "timestampSlice", timestampSlice, "len", len(timestampSlice), "len(results)", len(results))
+	backend.Logger.Debug("final value slice", "valueSlice", valueSlice)
+
+	val := settableSlice.Elem()
+	backend.Logger.Debug("final value slice", "settableSlice", settableSlice, "settableSlice.Elem()", val, "iface", val.Interface())
 
 	// create data frame response.
 	// For an overview on data frames and how grafana handles them:
@@ -126,8 +278,8 @@ func (d *Datasource) query(_ context.Context, pCtx backend.PluginContext, query 
 
 	// add fields.
 	frame.Fields = append(frame.Fields,
-		data.NewField("time", nil, []time.Time{query.TimeRange.From, query.TimeRange.To}),
-		data.NewField("values", nil, []int64{10, 20}),
+		data.NewField("time", nil, timestampSlice),
+		data.NewField("values", nil, val.Interface()),
 	)
 
 	// add the frames to the response.
