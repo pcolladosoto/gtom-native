@@ -169,6 +169,12 @@ type codeQueryModel struct {
 	TimeRange timeRange `json:"timeRange"`
 }
 
+// Be sure to read the following for a bit of context on all this reflect mumbo-jumbo:
+// https://stackoverflow.com/questions/42494333/appending-to-go-lang-slice-using-reflection
+// https://stackoverflow.com/questions/25384640/why-golang-reflect-makeslice-returns-un-addressable-value
+// https://go.dev/blog/laws-of-reflection
+// https://go.dev/doc/faq#convert_slice_of_interface
+// https://pkg.go.dev/reflect
 func (d *Datasource) query(_ context.Context, pCtx backend.PluginContext, query backend.DataQuery) backend.DataResponse {
 	var response backend.DataResponse
 
