@@ -45,11 +45,11 @@ class handler(BaseHTTPRequestHandler):
             return json.loads(self.rfile.read().decode("utf-8"))
         return None
 
-    # Check https://github.com/pcolladosoto/gtom-native/blob/main/README.md 
+    # Check https://github.com/pcolladosoto/gtom/blob/main/README.md 
     def handleMetrics(self):
         return pathlib.Path("./metrics.json").read_text(), 200
 
-    # Check https://github.com/pcolladosoto/gtom-native/blob/main/README.md 
+    # Check https://github.com/pcolladosoto/gtom/blob/main/README.md 
     def handleMetricPayloadOptions(self):
         return pathlib.Path("./metric-payload-options.json").read_text(), 200
 

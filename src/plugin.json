@@ -22,11 +22,11 @@
         "links": [
             {
                 "name": "GitHub",
-                "url": "https://github.com/gtom-native"
+                "url": "https://github.com/gtom"
             },
             {
                 "name": "MIT License",
-                "url": "https://github.com/gtom-native/blob/main/LICENSE"
+                "url": "https://github.com/gtom/blob/main/LICENSE"
             }
         ],
         "screenshots": [

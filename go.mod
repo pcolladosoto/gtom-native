@@ -1,11 +1,10 @@
-module github.com/pcolladosoto/gtom-native
+module github.com/pcolladosoto/gtom
 
 go 1.21
 
 require (
 	github.com/grafana/grafana-plugin-sdk-go v0.245.0
 	go.mongodb.org/mongo-driver v1.16.1
-	gonum.org/v1/gonum v0.12.0
 )
 
 require (
