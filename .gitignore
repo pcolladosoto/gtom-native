@@ -1,3 +1,7 @@
+# Ignore hidden filex except the .gitignore
+.*
+!.gitignore
+
 # Yarn
 .pnp.*
 .yarn/*

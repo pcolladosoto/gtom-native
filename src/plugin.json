@@ -1,6 +1,6 @@
 {
     "$schema": "https://raw.githubusercontent.com/grafana/grafana/master/docs/sources/developers/plugins/plugin.schema.json",
-    "name": "GTOM",
+    "name": "Gtom",
     "id": "gtom",
     "type": "datasource",
     "annotations": true,
@@ -13,11 +13,11 @@
         "author": {
             "name": "Pablo Collado Soto"
         },
-        "description": "Load data from MongoDB timeseries collections",
+        "description": "Load data from MongoDB time series collections",
         "keywords": ["json", "mongodb"],
         "logos": {
-            "small": "img/json-logo.svg",
-            "large": "img/json-logo.svg"
+            "small": "img/gtom-logo.svg",
+            "large": "img/gtom-logo.svg"
         },
         "links": [
             {
@@ -37,15 +37,8 @@
         "version": "%VERSION%",
         "updated": "%TODAY%"
     },
-    "routes": [
-        {
-            "path": "tables",
-            "url": "https://api.example.com/api/v1/tables",
-            "method": "GET"
-        }
-    ],
     "dependencies": {
         "grafanaDependency": ">=9.0.0",
-        "plugins": [ ]
+        "plugins": []
     }
 }

@@ -1,317 +1,169 @@
-# JSON API Grafana Datasource
+# Gtom Grafana Datasource
+The Gtom Datasource for Grafana runs queries against a MongoDB database and parses tim series collections into Grafana dataframes.
+This allows the plugin to leverage Grafana's features such as alerting out of the box.
 
-[![Build](https://github.com/simPod/GrafanaJsonDatasource/workflows/CI/badge.svg)](https://github.com/simPod/GrafanaJsonDatasource/actions?query=workflow%3A%22CI%22)
-[![Marketplace](https://img.shields.io/badge/dynamic/json?logo=grafana&color=F47A20&label=marketplace&prefix=v&query=%24.items%5B%3F%28%40.slug%20%3D%3D%20%22simpod-json-datasource%22%29%5D.version&url=https%3A%2F%2Fgrafana.com%2Fapi%2Fplugins)](https://grafana.com/grafana/plugins/simpod-json-datasource)
-[![Downloads](https://img.shields.io/badge/dynamic/json?logo=grafana&color=F47A20&label=downloads&query=%24.items%5B%3F%28%40.slug%20%3D%3D%20%22simpod-json-datasource%22%29%5D.downloads&url=https%3A%2F%2Fgrafana.com%2Fapi%2Fplugins)](https://grafana.com/grafana/plugins/simpod-json-datasource)
+## Wait! Doesn't this plugin already exist?
+Well... yes! There's already an [enterprise plugin][] available that (I guess) does exactly this and much more in a much better
+and efficient manner. However, the subscription needed to leverage this plugin is quite steep and the research institution I
+work for can't really afford it.
 
-The JSON Datasource executes requests against arbitrary backends and parses JSON response into Grafana dataframes.
+In an effort to save some money whilst still being capable of leveraging our central MongoDB instance (which also contains everything
+from inventories to caches) I decided to write a bare-bones datasource capable of querying a MongoDB database to extract information
+from [time series collections][].
+
+The downside to this plugin replicating a subset of its enterprise counterpart is that, according to Grafana's [plugin policy][] it
+cannot be signed. This translates into a bit more convoluted installation procedure than simply running `grafana-cli`. Read on to
+find out how to install the plugin...
+
+## Credit where credit is due
+This plugin heavily relies on the codebase backing the [simpod-json-datasource][] plugin. Actually, the frontend GUI is practically
+the same with some minor modifications. I would like to warmly thank `@simPod` for all his work and for making it publicly accessible.
+
+Also, the logo has been acquired from [123RF Free Images][]. The logo was made by [captainvector][]. We just made some minor tweaks to
+the original in terms of colour.
+
+Finally, even though I had no idea it existed when writing the initial plugin version (if I had known I wouldn't probably have written
+this datasource), we did come across the [`grafana-mongodb-community-plugin`][] datasource plugin which apparently implements most of
+what we have done. Be sure to check it out as, for the moment, I'm pretty sure its more stable and robust than `gtom`.
 
 ## Installation
+The installation basically translates into `unzip(1)`ping the built datasource into Grafana's plugin directory. As the plugin **is not**
+signed, you'll also need to make sure Grafana 'knows' it's safe to load. Assuming the pluing release is `gtom.zip` the following should
+do the trick:
 
-To install this plugin using the `grafana-cli` tool:
+    # unzip(1) the plugin into the plugins directory which, by default, is /var/lib/grafana/plugins
+    $ unzip gtom.zip -d /var/lib/grafana/plugins
 
-```sh
- grafana-cli plugins install simpod-json-datasource
- ```
+    # Do some sed(1) magic (or manuallly edit the file) so that /etc/grafana/grafana.ini contains
+    [plugins]
+    # Enter a comma-separated list of plugin identifiers to identify plugins to load even if they are unsigned. Plugins with modified signatures are never loaded.
+    allow_loading_unsigned_plugins = "gtom"
 
-See [here](https://grafana.com/grafana/plugins/simpod-json-datasource/) for more information.
+Please bear in mind your installation's plugin directory can be found by checking the value of the `plugins` setting under the `[paths]`
+section on `/etc/grafana/grafana.ini`. For a stock installation on AlmaLinux 9:
+
+    $ grep /var/lib/grafana /etc/grafana/grafana.ini
+    #################################### Paths ####################################
+    [paths]
+    # Path to where grafana can store temp files, sessions, and the sqlite3 db (if that is used)
+    ;data = /var/lib/grafana
+
+    # Temporary files in `data` directory older than given duration will be removed
+    ;temp_data_lifetime = 24h
+
+    # Directory where grafana can store logs
+    ;logs = /var/log/grafana
+
+    # Directory where grafana will automatically scan and look for plugins
+    ;plugins = /var/lib/grafana/plugins
+
+Please expect this section to be improved. Also, an important TODO concerns itself with writing a robust script that handles all
+this automatically.
 
 ## Setup
+Setting up the plugin can be accomplished just like with any other: you should simply add it through the web interface. The settings
+one can configure are:
 
-When adding datasource add your API endpoint to the `URL` field. That's where datasource will make requests to.
+1. **Instance URI**: The [URI][] of the MongoDB instance to target.
+1. **Database**: The name of the database containing the time series collections whose data we want to visualise. Bear in mind you'll need to
+    create a new datasource for each database you want to query.
+1. **Basic Auth**: This switch will allow you to define a username and password to authenticate with the MongoDB instance. Please bear in mind
+    that even though the UI is ready this authentication **hasn't** been implemented yet... It's on the TODO list too!
+1. **User**: The user to connect to the MongoDB instance as. Again, this will be silently ignored for now...
+1. **Password**: The user's password. Once more, this will be silently ignored for now...
+1. **Default editor mode**: Queries can be built by either writing the JSON payload 'as-is' or by using a (somewhat) interactive interface with
+    some degree of data autodiscovery. This setting controls which UI you'll be presented with by default. The former way of specifying the payload
+    is what we deem as the *Code* edit mode, whilst the latter is what we call the *Builder* edit mode.
 
-![Datasource setup](https://raw.githubusercontent.com/simPod/grafana-json-datasource/0.6.x/docs/images/datasource-setup.png)
+Once that's ready you should hit the `Save & test` button to check everything works as expected. If it does you're good to go! From this point on
+the datasource can be used just like any other. You just need to know the query format...
 
-If you want to add custom headers, keep Access set to `Server`.
+## The query format
+The builder edit mode offers a great deal of flexibility and the chance to craft a truly handy interface for the user. The problem is it's very
+easy to overload the backing MongoDB instance which a myriad queries when crafting the 'schema' of MongoDB's collections. After all, MongoDB's
+somewhat 'unstructured' nature makes it rather hard to unify all the data in a collection in a known, simple schema. This is what motivated me
+to allow the user to define a 'raw' [find() query][] (including its projection) to define what data to visualise.
 
-## API
+This *find query* should be specified as a `string` resembling what you'd pass to `mongosh`. For instance, if we wanted to graph all the values
+with a given `tag.host` we could specify:
 
-An OpenAPI definition is at [openapi.yaml](https://github.com/simPod/GrafanaJsonDatasource/blob/0.6.x/openapi.yaml). 
-_You can explore it using [Swagger Editor](https://editor-next.swagger.io/)_.
+    {"tags.host": "foobar"}
 
-To work with this datasource the backend needs to implement 4 endpoints:
-
-- `GET /` with 200 status code response. Used for "Test connection" on the datasource config page.
-- `POST /metrics` to return available metrics.
-- `POST /metric-payload-options` to return a list of metric payload options.
-- `POST /query` to return panel data or annotations.
-
-Those 3 endpoints are optional:
-
-- `POST /variable` to return data for Variable of type `Query`.
-- `POST /tag-keys` returning tag keys for ad hoc filters.
-- `POST /tag-values` returning tag values for ad hoc filters.
-
-### /metrics
-
-`POST /metrics`
-
-In `Panel > Queries` page. When configuring a query request using `Builder` mode, it will send the request to obtain the available metrics. The request body will carry the current metric and payload. In the `Builder` mode, if the `reloadMetric` value in the load configuration is true, the api will also be triggered when the value is modified / switched.
-
-Example request:
-```json
-{}
-```
-Or. 
-```json
-{
-  "metric": "DescribeMetricList",
-  "payload":{
-    "cloud": "cf6591c5dad211eaa22100163e120f6e",
-    "namespace": "MySQL"
-  }
-}
-```
-Example response:
-```json5
-[{
-  "label": "Describe metric list", // Optional. If the value is empty, use the value as the label
-  "value": "DescribeMetricList", // The value of the option.
-  "payloads": [{ // Configuration parameters of the payload.
-    "label": "Namespace", // The label of the payload. If the value is empty, use the name as the label.
-    "name": "namespace", // The name of the payload.
-    "type": "select", // If the value is select, the UI of the payload is a radio box. If the value is multi-select, the UI of the payload is a multi selection box; if the value is input, the UI of the payload is an input box; if the value is textarea, the UI of the payload is a multiline input box. The default is input.
-    "placeholder": "Please select namespace", // Input box / selection box prompt information.
-    "reloadMetric": true, // Whether to overload the metrics API after modifying the value of the payload.
-    "width": 10, // Set the input / selection box width to a multiple of 8px. 
-    "options": [{ // If the payload type is select / multi-select, the list is the configuration of the option list.
-      "label": "acs_mongodb", // The label of the payload select option.
-      "value": "acs_mongodb", // The label of the payload value.
-    },{
-      "label": "acs_rds",
-      "value": "acs_rds",
-    }]
-  },{
-    "name": "metric",
-    "type": "select"
-  },{
-    "name": "instanceId",
-    "type": "select"
-  }]
-},{
-  "value": "DescribeMetricLast",
-  "payloads": [{
-    "name": "namespace",
-    "type": "select"
-  },{
-    "name": "metric",
-    "type": "select"
-  },{
-    "name": "instanceId",
-    "type": "multi-select"
-  }]
-}]
-```
-The display is as follows:
-![Metrics in builder Mode](https://raw.githubusercontent.com/simPod/grafana-json-datasource/0.6.x/docs/images/builder-metrics.png)
-
-### /metric-payload-options
-
-`POST /metric-payload-options`
-
-When the payload `type` is `select` or `multi-select` and the payload `options` configuration is empty, expanding the drop-down menu will trigger this API. The request body will carry the current metric and payload. 
-
-Example Request:
-```json5
-{
-  "metric":"DescribeMetricList", // Current metric.
-  "payload": { // Current payload.
-    "namespace":"acs_ecs"
-  },
-  "name":"cms_metric" // The payload name of the option list needs to be obtained.
-}
-```
-
-Example Response:
-```json
-[{ 
-  "label": "CPUUtilization",
-  "value": "CPUUtilization"
-},{
-  "label": "DiskReadIOPS",
-  "value": "DiskReadIOPS"
-},{
-  "label": "memory_freeutilization",
-  "value": "memory_freeutilization"
-}]
-```
-The display is as follows:
-![Metric options in builder Mode](https://raw.githubusercontent.com/simPod/grafana-json-datasource/0.6.x/docs/images/builder-metric-options.png)
-
-### /query
-
-`POST /query`
-
-Example request:
+The *find query* will allow us to define what to filter on, but we still need to select what field from each document we want to graph. This should
+be specified as a `string` too, but we don't need to add any additional formatting: the projection is generated internally. If we were to look for
+the field `sampleField` in every document we would wind up with a payload such as:
 
 ```json
 {
-  "panelId": 1,
-  "range": {
-    "from": "2016-10-31T06:33:44.866Z",
-    "to": "2016-10-31T12:33:44.866Z",
-    "raw": {
-      "from": "now-6h",
-      "to": "now"
-    }
-  },
-  "rangeRaw": {
-    "from": "now-6h",
-    "to": "now"
-  },
-  "interval": "30s",
-  "intervalMs": 30000,
-  "maxDataPoints": 550,
-  "targets": [
-     { "target": "Packets", "refId": "A", "payload": { "additional": "optional json" } },
-     { "target": "Errors", "refId": "B" }
-  ],
-  "filters": [{
-    "key": "City",
-    "operator": "=",
-    "value": "Berlin"
-  }]
+    "findQuery": "{\"tags.host\": \"foobar\"}",
+    "projection": "sampleField"
 }
 ```
 
-**Response body can contain anything that is or can be converted to a Grafana DataFrame using [this function](https://github.com/grafana/grafana/blob/1e024f22b8f767da01c9322f489d7b71aeec19c3/packages/grafana-data/src/dataframe/processDataFrame.ts#L284).
-Returned data will be mapped to a DataFrame through that.**
+The above can be inserted into the editor shown when working in the *Code* edit mode and it should be parsed without a problem. Please bear in
+mind that, as a convenience, you can use `''` to define strings within the `findQuery` element even if that's not valid JSON. These single
+quotes will be converted back to `""` internally so that you needn't escape all of them if writing the raw payload.
 
-Example response (metric value as a float , unix timestamp in milliseconds):
+All the other necessary context for the query such as the *from* and *to* limits and so on is automatically populated by the plugin based on
+the current settings.
 
-```json
-[
-  {
-    "target":"pps in",
-    "datapoints":[
-      [622,1450754160000],
-      [365,1450754220000]
-    ]
-  },
-  {
-    "target":"pps out",
-    "datapoints":[
-      [861,1450754160000],
-      [767,1450754220000]
-    ]
-  },
-  {
-    "target":"errors out",
-    "datapoints":[
-      [861,1450754160000],
-      [767,1450754220000]
-    ]
-  },
-  {
-    "target":"errors in",
-    "datapoints":[
-      [861,1450754160000],
-      [767,1450754220000]
-    ]
-  }
-]
-```
+## Developing
+In order to develop the plugin one needs to have several dependencies installed:
 
-```json
-[
-  {
-    "columns":[
-      {"text":"Time","type":"time"},
-      {"text":"Country","type":"string"},
-      {"text":"Number","type":"number"}
-    ],
-    "rows":[
-      [1234567,"SE",123],
-      [1234567,"DE",231],
-      [1234567,"US",321]
-    ],
-    "type":"table"
-  }
-]
-```
+1. **Golang**: The plugin's backend is written in Go so we need a local installation...
+1. **NPM**: The frontend leverages React and that means whe need Node.js (I think, I honestly have no idea about the
+    whole JavaScript ecosystem).
+1. **Yarn**: Continuing with the whole JavaScript stuff we also need Yarn.
+1. **Mage**: The building of the Go backend is automated with `mage` so we need to throw that in too.
+1. **Make**: The building and bundling of the plugin is automated with `make` for now with a very rudimentary `Makefile`. Be sure to
+    check it for information on available targets.
 
-_The relation between `target` in request and response is 1:n. You can return multiple targets in response for one requested `target`._
+Please bear in mind that when getting set up the following need to be run:
 
-#### Payload
+    # Install JavaScript dependencies
+    $ yarn install
 
-Sending additional data for each metric is supported via the `Payload` input field that allows you to enter any JSON string.
+Even though its a laughable bad practice we have been developing the plugin by bundling everything together, zipping it, uploading it to a
+live Grafana server through `scp(1)`, installing it as explained above and erasing the caches on our browser. An example for Firefox can
+be seen [here][https://support.mozilla.org/en-US/kb/how-clear-firefox-cache]. Bear in mind it's very handy to enable debug-level logging
+just for `gtom` which can be done by adding the following to `/etc/grafana/grafana.ini`:
 
-For example, when `{ "additional": "optional json" }` is entered into `Payload` input, it is attached to the target data under `"payload"` key:
+    [log]
+    # Either "debug", "info", "warn", "error", "critical", default is "info"
+    level = error
 
-```json
-{ "target": "upper_50", "refId": "A", "payload": { "additional": "optional json" } }
-```
+    # optional settings to set different levels for specific loggers. Ex filters = sqlstore:debug
+    filters = plugin.gtom:debug
 
-You can also enter variables:
+The above configuration will only show error-level logs for the rest of Grafana and debug-level logs for the plugin.
 
-![Additional data variable input](https://raw.githubusercontent.com/simPod/grafana-json-datasource/0.6.x/docs/images/additional-data-variable-input.png)
+## Contributing
+PRs and suggestions are more than welcome! Feel free to open an issue on PR.
 
-### /variable
+## Further reading
+Be sure to check [Grafana's plugin development documentation][] for a ton of really useful information. This includes:
 
-`POST /variable`
+1. [**Packaging a plugin**][]
+1. [**Building a backend plugin**][]
+1. [**MongoDB Go driver**][]
+1. [**Convert a frontend plugin to a backend one**][]
+1. [**Grafana UI Components**][]
+1. [**Grafana UI Catalog**][]
 
-Example request body:
-
-```json
-{
-  "payload":{"target":"systems"},
-  "range":{
-    "from":"2022-02-14T08:09:32.164Z",
-    "to":"2022-02-21T08:09:32.164Z",
-    "raw":{"from":"now-7d","to":"now"}
-  }
-}
-```
-
-`"payload"` is value from your input in Variable edit form.
-
-Example response
-
-```json
-[
-  {"__text":"Label 1", "__value":"Value1"},
-  {"__text":"Label 2", "__value":"Value2"},
-  {"__text":"Label 3", "__value":"Value3"}
-]
-```
-
-DataFrame is also supported.
-
-### /tag-keys
-
-`POST /tag-keys`
-
-Example request body
-
-```json
-{ }
-```
-
-The tag keys api returns:
-
-```json
-[
-    {"type":"string","text":"City"},
-    {"type":"string","text":"Country"}
-]
-```
-
-### /tag-values
-
-`POST /tag-values`
-
-Example request body
-
-```json
-{"key": "City"}
-```
-
-The tag values api returns:
-
-```json
-[
-    {"text": "Eins!"},
-    {"text": "Zwei"},
-    {"text": "Drei!"}
-]
-```
+<!-- REFS -->
+[plugin policy]: https://grafana.com/legal/plugins/
+[enterprise plugin]: https://grafana.com/docs/plugins/grafana-mongodb-datasource/latest/
+[time series collections]: https://www.mongodb.com/docs/manual/core/timeseries-collections/
+[simpod-json-datasource]: https://grafana.com/grafana/plugins/simpod-json-datasource/
+[123RF Free Images]: https://www.123rf.com/free-images/
+[captainvector]: https://www.123rf.com/profile_captainvector
+[`grafana-mongodb-community-plugin`]: https://github.com/meln5674/grafana-mongodb-community-plugin
+[URI]: https://www.mongodb.com/docs/manual/reference/connection-string/
+[find() query]: https://www.mongodb.com/docs/manual/reference/method/db.collection.find/
+[Grafana's plugin development documentation]: https://grafana.com/developers/plugin-tools/
+[**Packaging a plugin**]: https://grafana.com/developers/plugin-tools/publish-a-plugin/package-a-plugin
+[**Building a backend plugin**]: https://grafana.com/developers/plugin-tools/tutorials/build-a-data-source-backend-plugin
+[**MongoDB Go driver**]: https://www.mongodb.com/docs/drivers/go/current/
+[**Convert a frontend plugin to a backend one**]: https://grafana.com/developers/plugin-tools/how-to-guides/data-source-plugins/convert-a-frontend-datasource-to-backend
+[**Grafana UI Components**]: https://github.com/grafana/grafana/tree/v10.4.2/packages/grafana-ui/src/components
+[**Grafana UI Catalog**]: https://developers.grafana.com/ui/latest/index.html
